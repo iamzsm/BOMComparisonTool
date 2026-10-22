@@ -1,5 +1,5 @@
 # BOM Studio — browser-only JavaScript prototype
-## Thanks my $20 per month ChatGPT for building this all things.
+Thanks my $20 per month ChatGPT for building this all things.
 ## How to run
 
 1. Open the link https://iamzsm.github.io/BOMComparisonTool/
