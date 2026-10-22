@@ -1,4 +1,4 @@
-# BOM Studio — browser-only JavaScript prototype
+# SBR BOM Comparison Tool
 Thanks my $20 per month ChatGPT for building this all things.
 ## How to run
 
