@@ -11,7 +11,7 @@ const isPcb=p=>/PCB/i.test(String(p.get('Description')||''));
 const tags=(p,rules)=>Object.entries(rules).filter(([k,re])=>re.test(String(p.get('Description')||''))).map(([k])=>k);
 const group=(items,key)=>{const m=new Map();for(const p of items){const k=key(p);if(!k)continue;if(!m.has(k))m.set(k,[]);m.get(k).push(p)}return m};
 const similarity=(a,b)=>{let v=0;if(a.ct&&a.ct===b.ct)v+=50;if(a.loc.size&&b.loc.size){let n=[...a.loc].filter(x=>b.loc.has(x)).length;if(n)v+=a.loc.size===b.loc.size&&n===a.loc.size?70:35+35*n/new Set([...a.loc,...b.loc]).size}if(a.group&&b.group&&a.group===b.group)v+=8;if(a.sub===b.sub)v+=3;return v};
-export function readParts(ws){let hdr={};ws.getRow(1).eachCell((cell,c)=>{if(norm(cell.value))hdr[norm(cell.value)]=c});for(const k of ['Description','QTY','Location','Manufacturer P/N','Manufacturer Name','Main/Sub','Sub Group','SBR ID'])if(!hdr[norm(k)])throw Error(`Missing header ${k} in worksheet ${ws.name}`);let p=[];for(let r=2;r<=ws.rowCount;r++){let data={};for(const [k,c] of Object.entries(hdr)){let v=ws.getRow(r).getCell(c).value;data[k]=v&&typeof v==='object'?(v.text??v.result??v.richText?.map(x=>x.text).join('')??v):v}if(norm(data.DESCRIPTION)){let x={row:r,data,get(k){return this.data[norm(k)]}};Object.defineProperties(x,{mpn:{get(){return norm(this.get('Manufacturer P/N'))}},manufacturer:{get(){return norm(this.get('Manufacturer Name'))}},ct:{get(){return norm(this.get('CT P/N'))}},loc:{get(){return locs(this.get('Location'))}},group:{get(){return norm(this.get('Sub Group'))}},sub:{get(){return norm(this.get('Main/Sub'))==='SUB'}},main:{get(){return norm(this.get('Main/Sub'))==='MAIN'}}});p.push(x)}}return {parts:p,headers:hdr}}
+export function readParts(ws,{requireSbr=false}={}){let hdr={};ws.getRow(1).eachCell((cell,c)=>{if(norm(cell.value))hdr[norm(cell.value)]=c});for(const k of ['Description','QTY','Location','Manufacturer P/N','Manufacturer Name','Main/Sub','Sub Group',...(requireSbr?['SBR ID']:[])])if(!hdr[norm(k)])throw Error(`Missing header ${k} in worksheet ${ws.name}`);let p=[];for(let r=2;r<=ws.rowCount;r++){let data={};for(const [k,c] of Object.entries(hdr)){let v=ws.getRow(r).getCell(c).value;data[k]=v&&typeof v==='object'?(v.text??v.result??v.richText?.map(x=>x.text).join('')??v):v}if(norm(data.DESCRIPTION)){let x={row:r,data,get(k){return this.data[norm(k)]}};Object.defineProperties(x,{mpn:{get(){return norm(this.get('Manufacturer P/N'))}},manufacturer:{get(){return norm(this.get('Manufacturer Name'))}},ct:{get(){return norm(this.get('CT P/N'))}},loc:{get(){return locs(this.get('Location'))}},group:{get(){return norm(this.get('Sub Group'))}},sub:{get(){return norm(this.get('Main/Sub'))==='SUB'}},main:{get(){return norm(this.get('Main/Sub'))==='MAIN'}}});p.push(x)}}return {parts:p,headers:hdr}}
 export function compare(old,newParts){let matches=[],review=[],seenOld=new Set(),seenNew=new Set(),log=[],counts={UNCHANGED:0,MODIFIED:0,ADDED:0,REMOVED:0,'RETAINED GROUP MEMBER':0,'PCB MANUAL REVIEW':0};
 const oi=group(old,p=>p.mpn?`${p.mpn}\0${p.manufacturer}`:''),ni=group(newParts,p=>p.mpn?`${p.mpn}\0${p.manufacturer}`:'');
 for(const [k,oo] of oi){if(!ni.has(k))continue;let nn=ni.get(k);if(oo.length===1&&nn.length===1){matches.push([oo[0],nn[0]]);seenOld.add(oo[0].row);seenNew.add(nn[0].row);continue}let os=[...oo],ns=[...nn];while(os.length&&ns.length){let scores=os.flatMap(a=>ns.map(b=>({a,b,s:similarity(a,b)}))).sort((x,y)=>y.s-x.s||x.a.row-y.a.row||x.b.row-y.b.row);let {a,b,s}=scores[0],rivals=scores.filter(x=>(x.a.row===a.row||x.b.row===b.row)&&!(x.a.row===a.row&&x.b.row===b.row));if(s<35||(rivals.length&&s-Math.max(...rivals.map(x=>x.s))<12))break;matches.push([a,b]);seenOld.add(a.row);seenNew.add(b.row);os=os.filter(x=>x!==a);ns=ns.filter(x=>x!==b)}for(const a of os){review.push(['DUPLICATE / AMBIGUOUS MATERIAL',a.row,ns.map(x=>x.row).join(','),a.mpn]);seenOld.add(a.row)}for(const b of ns)seenNew.add(b.row)}
@@ -27,7 +27,53 @@ const uo=old.filter(a=>!seenOld.has(a.row)&&!reviewOld.has(a.row)&&!isPcb(a)),un
 for(const a of uo){if(!a.loc.size||a.sub)continue;let options=un.filter(b=>!pairedN.has(b.row)&&!b.sub&&sameLoc(a,b)&&a.mpn&&b.mpn&&a.mpn!==b.mpn);if(options.length!==1)continue;let b=options[0],rivals=uo.filter(x=>!pairedO.has(x.row)&&x.row!==a.row&&!x.sub&&sameLoc(x,b)&&x.mpn&&x.mpn!==b.mpn);if(rivals.length)continue;if(newParts.some(x=>x.row!==b.row&&x.mpn===a.mpn&&x.manufacturer===a.manufacturer))continue;if(old.some(x=>x.row!==a.row&&x.mpn===b.mpn&&x.manufacturer===b.manufacturer))continue;replacement.set(a.row,b);pairedO.add(a.row);pairedN.add(b.row)}
 for(const a of old){if(seenOld.has(a.row)||reviewOld.has(a.row))continue;if(isPcb(a)){counts['PCB MANUAL REVIEW']++;log.push(['PCB MANUAL REVIEW',a.row,null,a.get('SBR ID'),a.get('Location'),'Description',a.get('Description'),'Manual review; not removed']);continue}deleted.add(a.row);counts.REMOVED++;log.push([replacement.has(a.row)?'REPLACED':'REMOVED',a.row,replacement.get(a.row)?.row??null,a.get('SBR ID'),a.get('Location'),null,null,null])}
 let added=[];for(const [r,b] of replacement){added.push({b,after:r,status:'REPLACEMENT NEW'});counts.ADDED++;log.push(['REPLACEMENT ADDED',r,b.row,null,b.get('Location'),null,null,null])}for(const b of newParts){if(seenNew.has(b.row)||pairedN.has(b.row)||reviewNew.has(b.row))continue;added.push({b,after:null,status:isPcb(b)?'PCB MANUAL REVIEW':'ADDED'});if(isPcb(b))counts['PCB MANUAL REVIEW']++;else counts.ADDED++;log.push([isPcb(b)?'PCB MANUAL REVIEW':'ADDED',null,b.row,null,b.get('Location'),null,null,''])}
+// System import classification: exact allowed labels, no colour-based change tagging.
+const MODES=['Add','Add Main','Add Sub','Delete','Change to Sub','Change to Main','Location, QTY change'];
+const role=p=>p.sub?'Sub':p.main?'Main':'';
+const addMode=p=>p.sub?'Add Sub':p.main&&p.group?'Add Main':'Add';
+const modes=new Map(), manual=new Map(), extraAdds=[];
+const note=(r,text)=>{if(!manual.has(r))manual.set(r,[]);manual.get(r).push(text)};
+// Any ambiguity in group relationships remains a manual-review item.
+for(const [a,b] of matches){
+  const differences=[];
+  const quantityLocation=['QTY','Location','UM'].some(f=>!eq(f,a.get(f),b.get(f)));
+  // Effective group QTY/Location may differ even if one alternative carries blanks.
+  const groupAdjusted=gChanges.get(a.group)||{};
+  const qtyChange=quantityLocation||Object.keys(groupAdjusted).length>0;
+  const roleChange=Boolean(role(a)&&role(b)&&role(a)!==role(b));
+  if(roleChange)differences.push(role(b)==='Main'?'Change to Main':'Change to Sub');
+  if(qtyChange)differences.push('Location, QTY change');
+  if(differences.length>1){
+    modes.set(a.row,'Delete');
+    extraAdds.push({b,after:a.row,status:'MULTIPLE CHANGES — READD',mode:addMode(b)});
+    log.push(['MULTIPLE CHANGES: DELETE + ADD',a.row,b.row,a.get('SBR ID'),a.get('Location'),'Modify Mode','Delete',addMode(b)]);
+    // Avoid updating old-row content when its output is a deletion.
+    changes.delete(a.row);modified.delete(a.row);
+  }else if(differences.length===1){modes.set(a.row,differences[0]);}
+  else if(modified.has(a.row)){
+    // Unsupported non-positional matched changes must not be mislabeled.
+    note(a.row,'Matched non-QTY/Location change: verify permitted Modify Mode manually');
+    review.push(['MODIFY MODE CANNOT CLASSIFY',a.row,String(b.row),a.mpn]);
+  }
+}
+for(const [g,ch] of gChanges){for(const p of oldGroups.get(g)||[]){
+  if(!modes.has(p.row)&&!manual.has(p.row))modes.set(p.row,'Location, QTY change');
+}}
+for(const a of old){if(deleted.has(a.row)&&!isPcb(a))modes.set(a.row,'Delete')}
+for(const entry of added){entry.mode=addMode(entry.b)}
+// Missing historical alternatives are returned as ADD entries and explicitly flagged.
+// The original historical row is not duplicated; the new entry has a blank SBR ID.
+for(const a of old.filter(x=>retained.has(x.row))){
+  extraAdds.push({b:a,after:a.row,status:'RETAINED ALTERNATIVE REVIEW',mode:addMode(a),review:true,sourceOldRow:a.row});
+  note(a.row,'Old group member not present in NEW; added for manual review');
+}
+// PCB/PCBA absent from NEW: preserve source row and flag for manual checking.
+for(const a of old.filter(x=>isPcb(x)&&!seenOld.has(x.row))){
+  modes.set(a.row,'Add');note(a.row,'PCB absent from NEW; retained as Add for manual review');
+}
+for(const a of old){if(blocked.has(a.group))note(a.row,'Inconsistent group: manual review required')}
+// Don't add a duplicate original row for retained group members: output writer handles it.
 const mo=new Map(matches.map(([a,b])=>[a.row,b])),mn=new Map(matches.map(([a,b])=>[b.row,a])),rn=new Map([...replacement].map(([r,b])=>[b.row,old.find(a=>a.row===r)]));function status(side,p){if(side==='OLD'){if(isPcb(p)&&!mo.has(p.row))return 'PCB MANUAL REVIEW';if(reviewOld.has(p.row)||blocked.has(p.group))return 'NEEDS REVIEW';if(mo.has(p.row))return modified.has(p.row)?'MODIFIED':'UNCHANGED';if(retained.has(p.row))return 'RETAINED ALTERNATIVE';if(replacement.has(p.row))return 'REPLACED OLD';if(seenOld.has(p.row))return 'UNRESOLVED / RETAINED';return 'REMOVED'}if(isPcb(p)&&!mn.has(p.row))return 'PCB MANUAL REVIEW';if(reviewNew.has(p.row))return 'NEEDS REVIEW';if(mn.has(p.row))return modified.has(mn.get(p.row).row)?'MODIFIED':'UNCHANGED';if(rn.has(p.row))return 'REPLACEMENT NEW';if(seenNew.has(p.row))return 'UNRESOLVED / MATCHED';return 'ADDED'}
 const makeList=rules=>[...old.map(p=>['OLD',p]),...newParts.map(p=>['NEW',p])].flatMap(([side,p])=>{let t=tags(p,rules);if(!t.length)return [];let partner=side==='OLD'?(mo.get(p.row)||replacement.get(p.row)):(mn.get(p.row)||rn.get(p.row));return [{side,p,tags:t,status:status(side,p),partner:partner?.row??null}]});
-return {old,new:newParts,matches,review,seenOld,seenNew,counts,changes,modified,deleted,replacement,added,retained,blocked,log,special:makeList(SPECIAL),critical:makeList(CRITICAL)};
+return {modes,manual,extraAdds,MODES,old,new:newParts,matches,review,seenOld,seenNew,counts,changes,modified,deleted,replacement,added,retained,blocked,log,special:makeList(SPECIAL),critical:makeList(CRITICAL)};
 }

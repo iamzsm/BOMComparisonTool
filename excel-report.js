@@ -1,25 +1,106 @@
-const NAVY='FF183153',YELLOW='FFFFFF00',GREY='FFD3D3D3',RED='FFC00000',AMBER='FFFFF2D5',PALE='FFEAF0F7';
-const fill=argb=>({type:'pattern',pattern:'solid',fgColor:{argb}});
-const safe=x=>x==null?'':typeof x==='object'?String(x.text??x.result??''):x;
-const title=(ws,r,txt,bg=NAVY,fc='FFFFFFFF')=>{ws.mergeCells(r,1,r,11);const c=ws.getCell(r,1);c.value=txt;c.fill=fill(bg);c.font={name:'Aptos',size:12,bold:true,color:{argb:fc}};c.alignment={vertical:'middle',wrapText:true,indent:1};ws.getRow(r).height=28};
-const section=(ws,r,txt)=>title(ws,r,txt);
-function header(ws,r,labels){labels.forEach((v,i)=>{let c=ws.getRow(r).getCell(i+1);c.value=v;c.fill=fill(NAVY);c.font={name:'Aptos',bold:true,color:{argb:'FFFFFFFF'}};c.alignment={wrapText:true,vertical:'middle'}});ws.getRow(r).height=32}
-function line(ws,r,values,highlight){values.forEach((v,i)=>{let c=ws.getRow(r).getCell(i+1);c.value=safe(v);c.alignment={wrapText:true,vertical:'top'};c.font={name:'Aptos',size:10,color:{argb:'FF202C3A'}};if(highlight)c.fill=fill(AMBER)});ws.getRow(r).height=34}
-function notice(ws,r,text,bg=AMBER){title(ws,r,text,bg,'FF754900');ws.getRow(r).height=54;ws.getCell(r,1).alignment={wrapText:true,vertical:'middle',indent:1}}
-export async function makeReport(oldBook,oldSheet,oldHdr,result,oldFile,newFile){const wb=oldBook;const ws=oldSheet;const width=Math.max(...Object.values(oldHdr));
-// Preserve OLD worksheet data, SBR IDs, and row order; replacements are inserted directly beneath OLD rows.
-const original=ws.rowCount;const states=[];for(let r=1;r<=original;r++){let row=ws.getRow(r),cells=[];for(let c=1;c<=width;c++){let x=row.getCell(c);cells.push({value:x.value,style:structuredClone(x.style??{})})}states.push(cells)}
-const after=new Map();for(const a of result.added.filter(x=>x.after!=null)){if(!after.has(a.after))after.set(a.after,[]);after.get(a.after).push(a)}
-const output=[];for(let i=1;i<=original;i++){output.push({oldRow:i,cells:states[i-1]});for(const a of after.get(i)||[])output.push({added:a})}for(const a of result.added.filter(x=>x.after==null))output.push({added:a});
-if(ws.rowCount)ws.spliceRows(1,ws.rowCount);const origMap=new Map();let ix=0;for(const entry of output){const r=++ix;let row=ws.getRow(r);if(entry.cells){origMap.set(entry.oldRow,r);entry.cells.forEach((obj,c)=>{let cell=row.getCell(c+1);cell.value=obj.value;cell.style=obj.style})}else{const b=entry.added.b;for(const [name,col]of Object.entries(oldHdr)){if(['SBR ID','HOME','NO.'].includes(name))continue;if(Object.prototype.hasOwnProperty.call(b.data,name))row.getCell(col).value=safe(b.data[name])}if(oldHdr['SBR ID'])row.getCell(oldHdr['SBR ID']).value=null;for(let c=1;c<=width;c++){let cell=row.getCell(c);if(entry.added.status!=='PCB MANUAL REVIEW')cell.fill=fill(YELLOW)}}row.commit()}
-for(const a of result.old){let r=origMap.get(a.row);if(!r)continue;if(result.deleted.has(a.row)&&!/PCB/i.test(String(a.get('Description')||'')))for(let c=1;c<=width;c++)ws.getRow(r).getCell(c).fill=fill(GREY);let changed=result.changes.get(a.row);if(changed){if(!/PCB/i.test(String(a.get('Description')||'')))for(let c=1;c<=width;c++)ws.getRow(r).getCell(c).fill=fill(YELLOW);for(const [field,nv]of changed){let col=oldHdr[field.toUpperCase()];if(!col)continue;let cell=ws.getRow(r).getCell(col);cell.value=safe(nv);cell.font={...(cell.font||{}),bold:true,color:{argb:RED}}}}if(/PCB/i.test(String(a.get('Description')||'')))for(let c=1;c<=width;c++)ws.getRow(r).getCell(c).fill={type:'pattern',pattern:'none'}}
-const sw=wb.addWorksheet('Summary & Review');sw.views=[];sw.showGridLines=false;[18,20,17,17,21,38,26,30,30,22,50].forEach((w,i)=>sw.getColumn(i+1).width=w);
-title(sw,1,'BOM COMPARISON — SUMMARY & ENGINEERING REVIEW');sw.getRow(1).height=40;notice(sw,2,'AUTOMATED REPORT — FOR REFERENCE ONLY. Manually verify critical components, PCB, SBR IDs, Main/Sub alternatives and Needs Review findings before approval.');title(sw,3,`OLD: ${oldFile}`,PALE,'FF202C3A');title(sw,4,`NEW: ${newFile}`,PALE,'FF202C3A');title(sw,5,`Generated: ${new Date().toLocaleString()} | Input: first worksheet in each BOM`,PALE,'FF202C3A');section(sw,7,'A. COMPARISON SUMMARY');const metrics=[['UNCHANGED',result.counts.UNCHANGED],['MODIFIED',result.counts.MODIFIED],['ADDED',result.counts.ADDED],['REMOVED',result.counts.REMOVED],['REPLACEMENT PAIRS',result.replacement.size],['RETAINED GROUP MEMBER',result.counts['RETAINED GROUP MEMBER']],['NEEDS REVIEW',result.review.length],['PCB MANUAL REVIEW',result.counts['PCB MANUAL REVIEW']]];metrics.forEach(([k,v],i)=>{let r=8+Math.floor(i/4)*2,c=1+(i%4)*2;sw.getCell(r,c).value=k;sw.getCell(r,c).font={bold:true,color:{argb:NAVY}};sw.getCell(r+1,c).value=v;sw.getCell(r+1,c).font={bold:true,size:16,color:{argb:NAVY}}});section(sw,13,'B. COLOUR LEGEND');[['YELLOW','Modified/new/replacement; red font identifies changed values',YELLOW],['GREY','Removed or replaced OLD component',GREY],['RED FONT','Changed field within a modified row',null],['NO FILL','PCB/PCBA stays unfilled — check manually in this worksheet',null]].forEach(([a,b,color],i)=>{let r=14+i;sw.getCell(r,1).value=a;sw.mergeCells(r,2,r,11);sw.getCell(r,2).value=b;if(color)sw.getCell(r,1).fill=fill(color);if(a==='RED FONT')sw.getCell(r,1).font={bold:true,color:{argb:RED}}});
-const labels=['Source','Keyword(s)','OLD Row','NEW Row','CT P/N','Description','Location','Manufacturer','Manufacturer P/N','Status','Recommended Check'];
-function block(start,items,heading){section(sw,start,heading);title(sw,start+1,`${items.length} source rows found across both BOMs. Comparison labels indicate automated evidence, not engineering approval.`,PALE,'FF202C3A');header(sw,start+3,labels);let row=start+4;for(const x of items){let p=x.p,status=x.status;line(sw,row++,[x.side,x.tags.join(', '),x.side==='OLD'?p.row:x.partner,x.side==='NEW'?p.row:x.partner,p.get('CT P/N'),p.get('Description'),p.get('Location'),p.get('Manufacturer Name'),p.get('Manufacturer P/N'),status,status==='UNCHANGED'?'Check specifications if necessary':'Manual verification before approval'],status!=='UNCHANGED')}if(!items.length){title(sw,row++,'No keyword matches detected.',PALE,'FF202C3A')}return row+2}
-let r=block(20,result.special,'C. SPECIAL COMPONENT CHECKLIST — MANUAL REVIEW');r=block(r,result.critical,'D. MAIN IC / CRITICAL COMPONENT REVIEW');section(sw,r,'E. RELEASE NOTICE');notice(sw,r+1,'FOR REFERENCE ONLY — Verify MCU, FLASH, DC/DC, LDO, MODULE, PCB, connectors, batteries, and retained Main/Sub alternatives before BOM release.');
-const cl=wb.addWorksheet('Change Log');header(cl,1,['Status','Original OLD Row','Original NEW Row','Old SBR ID','Location','Field','Old Value','New Value']);result.log.forEach((rec,i)=>line(cl,i+2,rec,false));cl.views=[{state:'frozen',ySplit:1}];for(let i=1;i<=8;i++)cl.getColumn(i).width=24;
-const nr=wb.addWorksheet('Needs Review');header(nr,1,['Reason','Original OLD Row','Possible NEW Row(s)','Identifier']);result.review.forEach((rec,i)=>line(nr,i+2,rec,true));nr.views=[{state:'frozen',ySplit:1}];[43,23,27,34].forEach((w,i)=>nr.getColumn(i+1).width=w);
-// Move the summary directly after the original comparison worksheet; do not freeze the summary.
-// Worksheets were created in the intended order: original, summary, log, review.
-return wb.xlsx.writeBuffer()}
+// BOM Studio system-import Excel writer. Strict seven-value Modify Mode vocabulary.
+const NAVY='FF183153',PALE='FFEAF0F7',AMBER='FFFFE9B5';
+const fill=c=>({type:'pattern',pattern:'solid',fgColor:{argb:c}});
+const simple=x=>x==null?'':typeof x==='object'?x.text??x.result??x.richText?.map(t=>t.text).join('')??'':x;
+function heading(ws,row,title){let c=ws.getCell(row,1);c.value=title;c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill=fill(NAVY);ws.getRow(row).height=26}
+function fields(ws,row,values,flag=false){values.forEach((v,i)=>{let c=ws.getCell(row,i+1);c.value=simple(v);c.alignment={wrapText:true,vertical:'top'};if(flag)c.fill=fill(AMBER)});ws.getRow(row).height=34}
+const role=p=>p?.sub?'Sub':p?.main?'Main':'';
+const addMode=p=>p?.sub?'Add Sub':p?.main&&p?.group?'Add Main':'Add';
+export async function makeReport(wb,ws,hdr,result,oldFile,newFile){
+  const origWidth=Math.max(...Object.values(hdr));const mainCol=hdr['MAIN/SUB'];
+  if(!mainCol)throw Error('OLD BOM is missing Main/Sub header');
+  // Store source data and formatting before reconstructing rows. Other worksheets
+  // remain in workbook; this prototype cannot guarantee formulas/merges survive.
+  const entries=[];const rowsByOld=new Map();
+  for(const p of result.old){let values=[],styles=[];for(let c=1;c<=origWidth;c++){
+    const x=ws.getRow(p.row).getCell(c);values.push(x.value);styles.push(structuredClone(x.style||{}));
+  }rowsByOld.set(p.row,{values,styles});}
+  // Unchanged OLD rows, including deleted originals, keep historical SBR IDs.
+  for(const p of result.old){if(result.retained.has(p.row))continue;
+    const row=rowsByOld.get(p.row);const mode=result.modes.get(p.row)||'';
+    const match=result.matches.find(([a])=>a.row===p.row)?.[1];
+    // Respect explicitly reported new Main/Sub role, even when nothing else changed.
+    if(match&&mode!=='Delete'&&role(match))row.values[mainCol-1]=role(match);
+    if(mode!=='Delete')for(const [field,nv] of result.changes.get(p.row)||[]){
+      let col=hdr[field.toUpperCase()];if(col)row.values[col-1]=nv;
+    }
+    entries.push({values:row.values,styles:row.styles,mode,group:p.group,part:p,review:result.manual.has(p.row),oldRow:p.row,after:p.row});
+  }
+  const materialize=(p,mode,review=false,after=null,forcedGroup='')=>{
+    const values=Array(origWidth).fill(null);for(const [key,c] of Object.entries(hdr)){
+      if(['SBR ID','HOME','NO.'].includes(key))continue;
+      values[c-1]=simple(p.data[key]);
+    }
+    if(role(p))values[mainCol-1]=role(p);
+    return {values,styles:null,mode,group:forcedGroup||p.group,part:p,review,after,oldRow:null};
+  };
+  for(const e of [...result.added,...result.extraAdds]){
+    if(e.sourceOldRow){const historical=rowsByOld.get(e.sourceOldRow);
+      let values=[...historical.values];if(hdr['SBR ID'])values[hdr['SBR ID']-1]=null;
+      if(hdr['HOME'])values[hdr['HOME']-1]=null;
+      if(hdr['NO.'])values[hdr['NO.']-1]=null;
+      entries.push({values,styles:historical.styles,mode:e.mode,part:e.b,group:e.b.group,review:true,after:e.after,oldRow:null});
+    }else entries.push(materialize(e.b,e.mode||addMode(e.b),Boolean(e.review),e.after));
+  }
+  // For matched group members, keep OLD group identifier if NEW does not supply one.
+  const groupMembership=new Map();for(const e of entries){const g=e.group;
+    if(!g)continue;if(!groupMembership.has(g))groupMembership.set(g,[]);groupMembership.get(g).push(e)}
+  // Stable group-aware sorting: keeps original block placement, Main before Sub,
+  // while leaving ungrouped components in their original relative order.
+  const ordered=[],emitted=new Set();for(const e of entries){
+    if(emitted.has(e))continue;
+    const block=e.group?groupMembership.get(e.group):[e];
+    const sorted=[...block].sort((a,b)=>{
+      const r=x=>String(x.values[mainCol-1]||'').trim().toUpperCase();
+      const n=x=>r(x)==='MAIN'?0:r(x)==='SUB'?1:2;
+      return n(a)-n(b)||entries.indexOf(a)-entries.indexOf(b);
+    });for(const x of sorted){if(!emitted.has(x)){ordered.push(x);emitted.add(x)}}
+  }
+  // Rebuild a flat table, inserting exactly one column immediately before Main/Sub.
+  // Uses header *names*, independent of the physical column order of either input.
+  const newWidth=origWidth+1;const header=[];for(let c=1;c<=origWidth;c++)header.push(ws.getRow(1).getCell(c).value);
+  header.splice(mainCol-1,0,'Modify Mode');
+  const roleColumn=mainCol+1;
+  if(ws.rowCount)ws.spliceRows(1,ws.rowCount);
+  header.forEach((value,i)=>{let c=ws.getRow(1).getCell(i+1);c.value=value;c.font={bold:true}});
+  for(let i=0;i<ordered.length;i++){
+    const e=ordered[i],row=ws.getRow(i+2),v=[...e.values];v.splice(mainCol-1,0,e.mode||'');
+    for(let c=1;c<=newWidth;c++){
+      let cell=row.getCell(c);cell.value=simple(v[c-1]);
+      const sourceCol=c>mainCol?c-1:c;
+      if(c!==mainCol&&e.styles?.[sourceCol-1]){
+        let style=structuredClone(e.styles[sourceCol-1]);
+        // No inherited comparison colour: restore all rows to normal no fill.
+        delete style.fill;cell.style=style;
+      }
+      cell.fill={type:'pattern',pattern:'none'};
+      if(e.review)cell.fill=fill(AMBER);
+    }
+    row.getCell(mainCol).alignment={vertical:'middle',wrapText:true};
+  }
+  ws.getColumn(mainCol).width=24;ws.getColumn(roleColumn).width=16;
+  ws.views=[];
+  // Worksheet 2 ONLY SECTION E: concise manual import validation.
+  // A-D are rendered on the website dashboard, not duplicated in Excel.
+  const sum=wb.addWorksheet('Summary & Review');sum.views=[];
+  [24,22,21,26,30,55].forEach((w,i)=>sum.getColumn(i+1).width=w);
+  heading(sum,1,'E. MAIN/SUB & IMPORT VALIDATION');
+  fields(sum,2,['REFERENCE ONLY — manually verify each item before importing the BOM.']);
+  fields(sum,4,['Check','OLD Row','NEW Row','Group','Modify Mode','Reason']);
+  let rr=5;const diagnostics=[];
+  for(const [oldRow,msgs] of result.manual){const p=result.old.find(x=>x.row===oldRow);
+    const b=result.matches.find(([a])=>a.row===oldRow)?.[1];
+    for(const msg of msgs)diagnostics.push(['MANUAL CHECK',oldRow,b?.row??'',p?.group??'',result.modes.get(oldRow)??'',msg]);}
+  for(const rec of result.review)diagnostics.push(['MATCH REVIEW',rec[1],rec[2],rec[3],'',rec[0]]);
+  const gm=new Map();for(const e of ordered){if(!e.group||e.mode==='Delete')continue;
+    if(!gm.has(e.group))gm.set(e.group,[]);gm.get(e.group).push(e)}
+  for(const [g,parts]of gm){const mains=parts.filter(p=>String(p.values[mainCol-1]||'').toUpperCase()==='MAIN');
+    if(mains.length!==1)diagnostics.push(['GROUP STRUCTURE','','',g,'',`Expected one Main; found ${mains.length}`]);}
+  if(!diagnostics.length)fields(sum,rr++,['No exceptions identified. Manual engineering verification is still required.']);
+  else for(const d of diagnostics)fields(sum,rr++,d,true);
+  const change=wb.addWorksheet('Change Log');fields(change,1,['Status','Original OLD Row','Original NEW Row','Old SBR ID','Location','Field','Old Value','New Value']);
+  result.log.forEach((r,i)=>fields(change,i+2,r));
+  const review=wb.addWorksheet('Needs Review');fields(review,1,['Reason','Original OLD Row','Possible NEW Row(s)','Identifier']);
+  result.review.forEach((r,i)=>fields(review,i+2,r,true));
+  sum.views=[];return wb.xlsx.writeBuffer();
+}

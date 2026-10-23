@@ -1,0 +1,13 @@
+import {compare} from './bom-engine.js';
+const part=(row,mpn,role,qty,group='',desc='Resistor',loc='R1')=>{const data={'DESCRIPTION':desc,'MANUFACTURER P/N':mpn,'MANUFACTURER NAME':'M','MAIN/SUB':role,'QTY':qty,'SUB GROUP':group,'LOCATION':loc,'SBR ID':`ID${row}`};return{row,data,get(k){return data[k.toUpperCase()]},get mpn(){return mpn},get manufacturer(){return 'M'},get ct(){return ''},get loc(){return new Set(loc?[loc]:[])},get group(){return group},get sub(){return role==='Sub'},get main(){return role==='Main'}}};
+const o=[part(2,'A','Sub',1,'G'),part(3,'B','Main',1,'G'),part(4,'P','Main',1,'','PCB Main','PCB1'),part(5,'C','Main',1)];
+const n=[part(2,'A','Main',2,'G'),part(3,'C','Main',1)];
+const r=compare(o,n);
+if(r.modes.get(2)!=='Delete')throw Error('role+QTY multiple change must be Delete');
+if(!r.extraAdds.some(x=>x.b.mpn==='A'&&x.mode==='Add Main'))throw Error('re-add A missing');
+if(!r.extraAdds.some(x=>x.b.mpn==='B'&&x.review))throw Error('missing group member not re-added');
+if(r.modes.get(4)!=='Add'||!r.manual.has(4))throw Error('missing PCB exception');
+if(r.modes.has(5))throw Error('unchanged should be blank');
+const simple=compare([part(10,'M1','Sub',1,'G')],[part(11,'M1','Main',1,'G')]);
+if(simple.modes.get(10)!=='Change to Main')throw Error('single role change wrong');
+console.log('PASS: multiple change delete+add; missing alt; PCB; unchanged; role change');
